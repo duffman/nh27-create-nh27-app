@@ -1,0 +1,39 @@
+{
+    "language": "TypeScript",
+    "runtime": "Node",
+    "sessionId": "sess_abc123",
+    "code": {
+      "files": [
+        {
+          "name": "config.ts",
+          "path": "src/config",
+          "description": "Configuration file for reading environment variables and application settings.",
+          "sourceKind": "Configuration",
+          "sourceCode": "import { config } from 'dotenv';\\nimport fs from 'fs';\\n\\nconfig();\\n\\nconst rawConfig = fs.readFileSync('colmind.json', 'utf8');\\nconst appConfig = JSON.parse(rawConfig);\\n\\nexport const environment = process.env.NODE_ENV || appConfig.environment;\\nexport const port = process.env.PORT || 3000;\\nexport const jwtSecret = process.env.JWT_SECRET || 'default_secret';\\nexport const databaseUrl = process.env.DATABASE_URL || 'sqlite:memory';"
+        },
+        {
+          "name": "app.ts",
+          "path": "src",
+          "description": "Main application file to set up and start the Express server with WebSocket.",
+          "sourceKind": "HTTP Server / Middleware",
+          "sourceCode": "import express from 'express';\\nimport { createServer } from 'http';\\nimport { Server as WebSocketServer } from 'ws';\\nimport { container } from 'tsyringe';\\nimport { useContainer } from 'typeorm';\\nimport { SocketService } from './services/socket.service';\\nimport { port } from './config/config';\\nimport './providers/data-storage.provider';\\n\\nconst app = express();\\nconst server = createServer(app);\\nconst wss = new WebSocketServer({ server });\\n\\ncontainer.resolve(SocketService).initialize(wss);\\n\\nuseContainer(container);\\n\\napp.use(express.json());\\n\\n// Routes\\nimport { AuthController } from './controllers/auth.controller';\\nimport { UserController } from './controllers/user.controller';\\n\\napp.use('/auth', container.resolve(AuthController).router);\\napp.use('/user', container.resolve(UserController).router);\\n\\nserver.listen(port, () => {\\n  console.log(`Server started on port ${port}`);\\n});"
+        }
+      ]
+    },
+    "changes": {
+      "summary": "Added new files for configuration, services, controllers, models, and middleware to set up a Node.js application with TypeScript using tsyringe for dependency injection and WebSocket support.",
+      "addedFiles": [
+        {
+          "path": "src/config",
+          "name": "config.ts"
+        },
+        {
+          "path": "src",
+          "name": "app.ts"
+        }
+      ],
+      "modifiedFiles": [],
+      "deletedFiles": []
+    }
+  }
+  

@@ -1,0 +1,334 @@
+{
+    "language": "TypeScript",
+    "runtime": "Node",
+    "folderStructure": {
+      "name": "backend",
+      "type": "directory",
+      "children": [
+        {
+          "name": "src",
+          "type": "directory",
+          "children": [
+            {
+              "name": "controllers",
+              "type": "directory",
+              "children": [
+                {
+                  "name": "authController.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "chatController.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "userController.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "usageController.ts",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "models",
+              "type": "directory",
+              "children": [
+                {
+                  "name": "user.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "usage.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "chatSession.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "chatMessage.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "userSettings.ts",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "services",
+              "type": "directory",
+              "children": [
+                {
+                  "name": "chatServiceRouter.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "openAiServiceProvider.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "serviceProviderManager.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "chatServiceProvider.ts",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "routes",
+              "type": "directory",
+              "children": [
+                {
+                  "name": "authRoutes.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "chatRoutes.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "userRoutes.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "usageRoutes.ts",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "middleware",
+              "type": "directory",
+              "children": [
+                {
+                  "name": "authMiddleware.ts",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "utils",
+              "type": "directory",
+              "children": [
+                {
+                  "name": "jwt.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "validation.ts",
+                  "type": "file"
+                },
+                {
+                  "name": "validationSchemas.ts",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "config",
+              "type": "directory",
+              "children": [
+                {
+                  "name": "ormconfig.ts",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "app.ts",
+              "type": "file"
+            },
+            {
+              "name": "database.ts",
+              "type": "file"
+            }
+          ]
+        }
+      ]
+    },
+    "code": [
+      {
+        "name": "authController.ts",
+        "path": "backend/src/controllers",
+        "sourceCode": "import { Request, Response } from 'express';\nimport { AppDataSource } from '../database';\nimport { User } from '../models/user';\nimport bcrypt from 'bcryptjs';\nimport jwt from 'jsonwebtoken';\nimport { validate } from 'class-validator';\nimport { generateToken } from '../utils/jwt';\n\nexport const register = async (req: Request, res: Response) => {\n  const { username, email, password } = req.body;\n  const user = new User();\n  user.username = username;\n  user.email = email;\n  user.password = await bcrypt.hash(password, 10);\n  user.tokenBalance = 1000; // Initial token balance\n\n  const errors = await validate(user);\n  if (errors.length > 0) {\n    return res.status(400).json(errors);\n  }\n\n  await AppDataSource.manager.save(user);\n  res.json(user);\n};\n\nexport const login = async (req: Request, res: Response) => {\n  const { email, password } = req.body;\n  const user = await AppDataSource.manager.findOneBy(User, { email });\n\n  if (!user || !(await bcrypt.compare(password, user.password))) {\n    return res.status(401).json({ message: 'Invalid credentials' });\n  }\n\n  const token = generateToken(user.id);\n  res.json({ token });\n};"
+      },
+      {
+        "name": "chatController.ts",
+        "path": "backend/src/controllers",
+        "sourceCode": "import { Request, Response } from 'express';\nimport { AppDataSource } from '../database';\nimport { ChatSession } from '../models/chatSession';\nimport { ChatMessage } from '../models/chatMessage';\nimport { User } from '../models/user';\nimport { ChatServiceRouter } from '../services/chatServiceRouter';\nimport { z } from 'zod';\nimport { container } from 'tsyringe';\nimport { AuthenticatedRequest } from '../middleware/authMiddleware';\n\nconst serviceRouter = container.resolve(ChatServiceRouter);\n\nexport const initiateChat = async (req: AuthenticatedRequest, res: Response) => {\n  const userId = req.user.id;\n  const session = new ChatSession();\n  session.user = await AppDataSource.manager.findOneBy(User, { id: userId });\n  session.createdAt = new Date();\n  session.messages = [];\n  await AppDataSource.manager.save(session);\n  res.json(session);\n};\n\nexport const sendMessage = async (req: AuthenticatedRequest, res: Response) => {\n  const schema = z.object({\n    sessionId: z.number(),\n    message: z.string().min(1),\n  });\n\n  try {\n    schema.parse(req.body);\n  } catch (error) {\n    return res.status(400).json(error.errors);\n  }\n\n  const { sessionId, message } = req.body;\n  const userId = req.user.id;\n  const user = await AppDataSource.manager.findOneBy(User, { id: userId });\n\n  const session = await AppDataSource.manager.findOne(ChatSession, {\n    where: { id: sessionId },\n    relations: ['messages'],\n  });\n\n  if (!session) return res.status(404).json({ message: 'Session not found' });\n  if (session.user.id !== userId) return res.status(403).json({ message: 'Forbidden' });\n\n  const response = await serviceRouter.routeMessage(message, user.settings);\n\n  const userMessage = new ChatMessage();\n  userMessage.session = session;\n  userMessage.sender = 'user';\n  userMessage.message = message;\n  userMessage.timestamp = new Date();\n  await AppDataSource.manager.save(userMessage);\n\n  const botMessage = new ChatMessage();\n  botMessage.session = session;\n  botMessage.sender = 'bot';\n  botMessage.message = response;\n  botMessage.timestamp = new Date();\n  await AppDataSource.manager.save(botMessage);\n\n  res.json({ session, response });\n};"
+      },
+      {
+        "name": "userController.ts",
+        "path": "backend/src/controllers",
+        "sourceCode": "import { Request, Response } from 'express';\nimport { AppDataSource } from '../database';\nimport { User } from '../models/user';\nimport { UserSettings } from '../models/userSettings';\nimport { z } from 'zod';\nimport { AuthenticatedRequest } from '../middleware/authMiddleware';\n\nexport const getUser = async (req: AuthenticatedRequest, res: Response) => {\n  const user = await AppDataSource.manager.findOneBy(User, { id: Number(req.params.id) });\n  if (!user) return res.status(404).json({ message: 'User not found' });\n  res.json(user);\n};\n\nexport const updateUserSettings = async (req: AuthenticatedRequest, res: Response) => {\n  const schema = z.object({\n    language: z.string().optional(),\n    simplifiedAnswers: z.boolean().optional(),\n    creativityLevel: z.number().min(0).max(1).optional()\n  });\n\n  try {\n    schema.parse(req.body);\n  } catch (error) {\n    return res.status(400).json(error.errors);\n  }\n\n  const userId = req.user.id;\n  const user = await AppDataSource.manager.findOneBy(User, { id: userId });\n  if (!user) return res.status(404).json({ message: 'User not found' });\n\n  let settings = await AppDataSource.manager.findOneBy(UserSettings, { user: { id: userId } });\n  if (!settings) {\n    settings = new UserSettings();\n    settings.user = user;\n  }\n\n  const { language, simplifiedAnswers, creativityLevel } = req.body;\n  if (language !== undefined) settings.language = language;\n  if (simplifiedAnswers !== undefined) settings.simplifiedAnswers = simplifiedAnswers;\n  if (creativityLevel !== undefined) settings.creativityLevel = creativityLevel;\n\n  await AppDataSource.manager.save(settings);\n  res.json(settings);\n};"
+      },
+      {
+        "name": "usageController.ts",
+        "path": "backend/src/controllers",
+        "sourceCode": "import { Request, Response } from 'express';\nimport { AppDataSource } from '../database';\nimport { Usage } from '../models/usage';\nimport { User } from '../models/user';\nimport { z } from 'zod';\nimport { AuthenticatedRequest } from '../middleware/authMiddleware';\n\nexport const logUsage = async (req: Request, res: Response) => {\n  const schema = z.object({\n    userId: z.number(),\n    model: z.string(),\n    tokensUsed: z.number(),\n  });\n\n  try {\n    schema.parse(req.body);\n  } catch (error) {\n    return res.status(400).json(error.errors);\n  }\n\n  const { userId, model, tokensUsed } = req.body;\n\n  const user = await AppDataSource.manager.findOneBy(User, { id: userId });\n  if (!user) return res.status(404).json({ message: 'User not found' });\n\n  if (user.tokenBalance < tokensUsed) {\n    return res.status(400).json({ message: 'Insufficient tokens' });\n  }\n\n  user.tokenBalance -= tokensUsed;\n  await AppDataSource.manager.save(user);\n\n  const usage = new Usage();\n  usage.user = user;\n  usage.model = model;\n  usage.tokensUsed = tokensUsed;\n  usage.timestamp = new Date();\n  await AppDataSource.manager.save(usage);\n\n  res.json(usage);\n};\n\nexport const getUserUsage = async (req: Request, res: Response) => {\n  const userId = Number(req.params.id);\n  const usage = await AppDataSource.manager.find(Usage, { where: { user: { id: userId } } });\n  res.json(usage);\n};"
+      },
+      {
+        "name": "user.ts",
+        "path": "backend/src/models",
+        "sourceCode": "import { Entity, PrimaryGeneratedColumn, Column, OneToOne, JoinColumn } from 'typeorm';\nimport { IsEmail, IsNotEmpty, MinLength } from 'class-validator';\nimport { UserSettings } from './userSettings';\n\n@Entity()\nexport class User {\n  @PrimaryGeneratedColumn()\n  id: number;\n\n  @Column()\n  @IsNotEmpty()\n  username: string;\n\n  @Column()\n  @IsEmail()\n  email: string;\n\n  @Column()\n  @MinLength(6)\n  password: string;\n\n  @Column()\n  tokenBalance: number;\n\n  @OneToOne(() => UserSettings)\n  @JoinColumn()\n  settings: UserSettings;\n}"
+      },
+      {
+        "name": "usage.ts",
+        "path": "backend/src/models",
+        "sourceCode": "import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';\nimport { User } from './user';\n\n@Entity()\nexport class Usage {\n  @PrimaryGeneratedColumn()\n  id: number;\n\n  @ManyToOne(() => User)\n  @JoinColumn({ name: 'userId' })\n  user: User;\n\n  @Column()\n  model: string;\n\n  @Column()\n  tokensUsed: number;\n\n  @Column()\n  timestamp: Date;\n}"
+      },
+      {
+        "name": "chatSession.ts",
+        "path": "backend/src/models",
+        "sourceCode": "import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany } from 'typeorm';\nimport { User } from './user';\nimport { ChatMessage } from './chatMessage';\n\n@Entity()\nexport class ChatSession {\n  @PrimaryGeneratedColumn()\n  id: number;\n\n  @ManyToOne(() => User)\n  user: User;\n\n  @Column()\n  createdAt: Date;\n\n  @OneToMany(() => ChatMessage, message => message.session)\n  messages: ChatMessage[];\n}"
+      },
+      {
+        "name": "chatMessage.ts",
+        "path": "backend/src/models",
+        "sourceCode": "import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';\nimport { ChatSession } from './chatSession';\n\n@Entity()\nexport class ChatMessage {\n  @PrimaryGeneratedColumn()\n  id: number;\n\n  @ManyToOne(() => ChatSession, session => session.messages)\n  session: ChatSession;\n\n  @Column()\n  sender: string;\n\n  @Column()\n  message: string;\n\n  @Column()\n  timestamp: Date;\n}"
+      },
+      {
+        "name": "userSettings.ts",
+        "path": "backend/src/models",
+        "sourceCode": "import { Entity, PrimaryGeneratedColumn, Column, OneToOne } from 'typeorm';\nimport { User } from './user';\n\n@Entity()\nexport class UserSettings {\n  @PrimaryGeneratedColumn()\n  id: number;\n\n  @OneToOne(() => User)\n  user: User;\n\n  @Column({ nullable: true })\n  language?: string;\n\n  @Column({ default: false })\n  simplifiedAnswers: boolean;\n\n  @Column({ type: 'float', default: 0.5 })\n  creativityLevel: number;\n}"
+      },
+      {
+        "name": "chatServiceRouter.ts",
+        "path": "backend/src/services",
+        "sourceCode": "import { singleton } from 'tsyringe';\nimport { ServiceProviderManager } from './serviceProviderManager';\nimport { UserSettings } from '../models/userSettings';\n\n@singleton()\nexport class ChatServiceRouter {\n  constructor(private providerManager: ServiceProviderManager) {}\n\n  async routeMessage(message: string, settings: UserSettings): Promise<string> {\n    // Use settings to determine which provider to use\n    const providers = this.providerManager.getProviders();\n    // Example: Always use the first provider for simplicity\n    const provider = providers[0];\n\n    if (!provider) {\n      throw new Error('No providers available');\n    }\n\n    // Pass settings to provider\n    return provider.sendMessage(message, settings);\n  }\n}"
+      },
+      {
+        "name": "openAiServiceProvider.ts",
+        "path": "backend/src/services",
+        "sourceCode": "import { injectable } from 'tsyringe';\nimport { ChatServiceProvider } from './chatServiceProvider';\nimport axios from 'axios';\nimport { UserSettings } from '../models/userSettings';\n\n@injectable()\nexport class OpenAiServiceProvider implements ChatServiceProvider {\n  name = 'OpenAI';\n\n  async calculateCost(message: string): Promise<number> {\n    // Implement cost calculation logic, possibly calling OpenAI API\n    return Math.ceil(message.length / 100); // Example: 1 token per 100 characters\n  }\n\n  async sendMessage(message: string, settings: UserSettings): Promise<string> {\n    // Implement the API call to OpenAI\n    const response = await axios.post('https://api.openai.com/v1/chat', {\n      message,\n      settings\n    }, {\n      headers: {\n        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,\n      },\n    });\n    return response.data.message;\n  }\n}"
+      },
+      {
+        "name": "serviceProviderManager.ts",
+        "path": "backend/src/services",
+        "sourceCode": "import { injectable, singleton } from 'tsyringe';\nimport { ChatServiceProvider } from './chatServiceProvider';\n\n@singleton()\n@injectable()\nexport class ServiceProviderManager {\n  private providers: ChatServiceProvider[] = [];\n\n  registerProvider(provider: ChatServiceProvider) {\n    this.providers.push(provider);\n  }\n\n  getProviders(): ChatServiceProvider[] {\n    return this.providers;\n  }\n\n  getProviderByName(name: string): ChatServiceProvider | undefined {\n    return this.providers.find(provider => provider.name === name);\n  }\n}\n\nexport const serviceProviderManager = new ServiceProviderManager();"
+      },
+      {
+        "name": "chatServiceProvider.ts",
+        "path": "backend/src/services",
+        "sourceCode": "import { UserSettings } from '../models/userSettings';\n\nexport interface ChatServiceProvider {\n  name: string;\n  calculateCost(message: string): Promise<number>;\n  sendMessage(message: string, settings: UserSettings): Promise<string>;\n}"
+      },
+      {
+        "name": "authRoutes.ts",
+        "path": "backend/src/routes",
+        "sourceCode": "import { Router } from 'express';\nimport { register, login } from '../controllers/authController';\nimport { validateRequest } from '../utils/validation';\nimport { registerSchema, loginSchema } from '../utils/validationSchemas';\n\nconst router = Router();\n\nrouter.post('/register', validateRequest(registerSchema), register);\nrouter.post('/login', validateRequest(loginSchema), login);\n\nexport default router;"
+      },
+      {
+        "name": "chatRoutes.ts",
+        "path": "backend/src/routes",
+        "sourceCode": "import { Router } from 'express';\nimport { initiateChat, sendMessage } from '../controllers/chatController';\nimport { authMiddleware } from '../middleware/authMiddleware';\nimport { validateRequest } from '../utils/validation';\nimport { chatMessageSchema } from '../utils/validationSchemas';\n\nconst router = Router();\n\nrouter.post('/chat/initiate', authMiddleware, initiateChat);\nrouter.post('/chat/message', authMiddleware, validateRequest(chatMessageSchema), sendMessage);\n\nexport default router;"
+      },
+      {
+        "name": "userRoutes.ts",
+        "path": "backend/src/routes",
+        "sourceCode": "import { Router } from 'express';\nimport { getUser, updateUserSettings } from '../controllers/userController';\nimport { authMiddleware } from '../middleware/authMiddleware';\n\nconst router = Router();\n\nrouter.get('/users/:id', authMiddleware, getUser);\nrouter.put('/users/settings', authMiddleware, updateUserSettings);\n\nexport default router;"
+      },
+      {
+        "name": "usageRoutes.ts",
+        "path": "backend/src/routes",
+        "sourceCode": "import { Router } from 'express';\nimport { logUsage, getUserUsage } from '../controllers/usageController';\nimport { authMiddleware } from '../middleware/authMiddleware';\n\nconst router = Router();\n\nrouter.post('/usage', authMiddleware, logUsage);\nrouter.get('/usage/:id', authMiddleware, getUserUsage);\n\nexport default router;"
+      },
+      {
+        "name": "authMiddleware.ts",
+        "path": "backend/src/middleware",
+        "sourceCode": "import { Request, Response, NextFunction } from 'express';\nimport jwt from 'jsonwebtoken';\nimport { AppDataSource } from '../database';\nimport { User } from '../models/user';\n\nexport interface AuthenticatedRequest extends Request {\n  user: User;\n}\n\nexport const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {\n  const authHeader = req.headers.authorization;\n\n  if (!authHeader || !authHeader.startsWith('Bearer ')) {\n    return res.status(401).json({ message: 'Unauthorized' });\n  }\n\n  const token = authHeader.split(' ')[1];\n\n  try {\n    const decoded: any = jwt.verify(token, process.env.JWT_SECRET as string);\n    const user = await AppDataSource.manager.findOneBy(User, { id: decoded.userId });\n\n    if (!user) {\n      return res.status(401).json({ message: 'Unauthorized' });\n    }\n\n    req.user = user;\n    next();\n  } catch (error) {\n    return res.status(401).json({ message: 'Unauthorized' });\n  }\n};"
+      },
+      {
+        "name": "jwt.ts",
+        "path": "backend/src/utils",
+        "sourceCode": "import jwt from 'jsonwebtoken';\n\nexport const generateToken = (userId: number) => {\n  return jwt.sign({ userId }, process.env.JWT_SECRET as string, { expiresIn: '1h' });\n};"
+      },
+      {
+        "name": "validation.ts",
+        "path": "backend/src/utils",
+        "sourceCode": "import { Request, Response, NextFunction } from 'express';\nimport { ZodSchema } from 'zod';\n\nexport const validateRequest = (schema: ZodSchema) => {\n  return (req: Request, res: Response, next: NextFunction) => {\n    try {\n      schema.parse(req.body);\n      next();\n    } catch (error) {\n      return res.status(400).json(error.errors);\n    }\n  };\n};"
+      },
+      {
+        "name": "validationSchemas.ts",
+        "path": "backend/src/utils",
+        "sourceCode": "import { z } from 'zod';\n\nexport const registerSchema = z.object({\n  username: z.string().min(1, 'Username is required'),\n  email: z.string().email('Invalid email address'),\n  password: z.string().min(6, 'Password must be at least 6 characters long'),\n});\n\nexport const loginSchema = z.object({\n  email: z.string().email('Invalid email address'),\n  password: z.string().min(6, 'Password must be at least 6 characters long'),\n});\n\nexport const chatMessageSchema = z.object({\n  sessionId: z.number().min(1, 'Session ID is required'),\n  message: z.string().min(1, 'Message is required'),\n});"
+      },
+      {
+        "name": "ormconfig.ts",
+        "path": "backend/src/config",
+        "sourceCode": "import { DataSourceOptions } from 'typeorm';\nimport { User } from '../models/user';\nimport { Usage } from '../models/usage';\nimport { ChatSession } from '../models/chatSession';\nimport { ChatMessage } from '../models/chatMessage';\nimport { UserSettings } from '../models/userSettings';\nimport dotenv from 'dotenv';\n\ndotenv.config();\n\nconst ormConfig: DataSourceOptions = {\n  type: 'sqlite',\n  database: process.env.DATABASE_URL || 'database.sqlite',\n  synchronize: true,\n  logging: false,\n  entities: [User, Usage, ChatSession, ChatMessage, UserSettings],\n};\n\nexport default ormConfig;"
+      },
+      {
+        "name": "app.ts",
+        "path": "backend/src",
+        "sourceCode": "import 'reflect-metadata';\nimport express from 'express';\nimport bodyParser from 'body-parser';\nimport { AppDataSource } from './database';\nimport authRoutes from './routes/authRoutes';\nimport chatRoutes from './routes/chatRoutes';\nimport userRoutes from './routes/userRoutes';\nimport usageRoutes from './routes/usageRoutes';\nimport { container } from 'tsyringe';\nimport { ServiceProviderManager } from './services/serviceProviderManager';\nimport { OpenAiServiceProvider } from './services/openAiServiceProvider';\n\nAppDataSource.initialize()\n  .then(async () => {\n    const serviceProviderManager = container.resolve(ServiceProviderManager);\n    serviceProviderManager.registerProvider(container.resolve(OpenAiServiceProvider));\n\n    const app = express();\n    app.use(bodyParser.json());\n\n    app.use('/api', authRoutes);\n    app.use('/api', chatRoutes);\n    app.use('/api', userRoutes);\n    app.use('/api', usageRoutes);\n\n    app.listen(3000, () => {\n      console.log('Server is running on port 3000');\n    });\n  })\n  .catch((error) => console.log(error));"
+      },
+      {
+        "name": "database.ts",
+        "path": "backend/src",
+        "sourceCode": "import { DataSource } from 'typeorm';\nimport ormConfig from './config/ormconfig';\n\nexport const AppDataSource = new DataSource(ormConfig);\n\nAppDataSource.initialize()\n  .then(() => {\n    console.log('Data Source has been initialized!');\n  })\n  .catch((err) => {\n    console.error('Error during Data Source initialization:', err);\n  });"
+      },
+      {
+        "name": "package.json",
+        "path": "ROOT",
+        "sourceCode": "{\n  \"name\": \"backend\",\n  \"version\": \"1.0.0\",\n  \"main\": \"dist/app.js\",\n  \"scripts\": {\n    \"start\": \"tsc && node dist/app.js\",\n    \"dev\": \"ts-node-dev src/app.ts\"\n  },\n  \"dependencies\": {\n    \"axios\": \"^0.21.1\",\n    \"bcryptjs\": \"^2.4.3\",\n    \"body-parser\": \"^1.19.0\",\n    \"class-validator\": \"^0.13.1\",\n    \"dotenv\": \"^8.2.0\",\n    \"express\": \"^4.17.1\",\n    \"jsonwebtoken\": \"^8.5.1\",\n    \"reflect-metadata\": \"^0.1.13\",\n    \"sqlite3\": \"^5.0.0\",\n    \"tsyringe\": \"^4.6.0\",\n    \"typeorm\": \"^0.2.31\",\n    \"zod\": \"^3.10.0\"\n  },\n  \"devDependencies\": {\n    \"@types/bcryptjs\": \"^2.4.2\",\n    \"@types/express\": \"^4.17.13\",\n    \"@types/jsonwebtoken\": \"^8.5.4\",\n    \"@types/node\": \"^14.14.35\",\n    \"ts-node\": \"^9.1.1\",\n    \"ts-node-dev\": \"^1.1.1\",\n    \"typescript\": \"^4.2.4\"\n  }\n}"
+      },
+      {
+        "name": "tsconfig.json",
+        "path": "ROOT",
+        "sourceCode": "{\n  \"compilerOptions\": {\n    \"target\": \"ES6\",\n    \"module\": \"commonjs\",\n    \"outDir\": \"./dist\",\n    \"rootDir\": \"./src\",\n    \"strict\": true,\n    \"esModuleInterop\": true,\n    \"experimentalDecorators\": true,\n    \"emitDecoratorMetadata\": true\n  },\n  \"include\": [\"src\"],\n  \"exclude\": [\"node_modules\"]\n}"
+      },
+      {
+        "name": ".env",
+        "path": "ROOT",
+        "sourceCode": "DATABASE_URL=database.sqlite\nJWT_SECRET=your_jwt_secret_key\nOPENAI_API_KEY=your_openai_api_key"
+      }
+    ],
+    "newOrUpdated": [
+      {
+        "path": "backend/src/controllers",
+        "name": "userController.ts"
+      },
+      {
+        "path": "backend/src/models",
+        "name": "userSettings.ts"
+      },
+      {
+        "path": "backend/src/services",
+        "name": "chatServiceProvider.ts"
+      },
+      {
+        "path": "backend/src/services",
+        "name": "chatServiceRouter.ts"
+      },
+      {
+        "path": "backend/src/services",
+        "name": "openAiServiceProvider.ts"
+      },
+      {
+        "path": "backend/src/services",
+        "name": "serviceProviderManager.ts"
+      },
+      {
+        "path": "backend/src/routes",
+        "name": "userRoutes.ts"
+      },
+      {
+        "path": "ROOT",
+        "name": "package.json"
+      },
+      {
+        "path": "ROOT",
+        "name": "tsconfig.json"
+      },
+      {
+        "path": "ROOT",
+        "name": ".env"
+      }
+    ]
+  }
+  

@@ -1,0 +1,81 @@
+{
+    "language": "TypeScript",
+    "runtime": "Node",
+    "sessionId": "sess_12345",
+    "code": {
+      "files": [
+        {
+          "name": "gitService.ts",
+          "path": "src/services",
+          "description": "Service to handle GIT operations including initialization and committing changes.",
+          "sourceKind": "Service",
+          "sourceCode": "import simpleGit, { SimpleGit, SimpleGitOptions } from 'simple-git';\\nimport { ProjectConfig } from '../types';\\nimport { v4 as uuidv4 } from 'uuid';\\nimport fs from 'fs';\\nimport path from 'path';\\nimport ChatGPTService from './chatGPTService';\\n\\nclass GitService {\\n  private git: SimpleGit;\\n  private projectDir: string;\\n\\n  constructor() {\\n    const options: Partial<SimpleGitOptions> = {\\n      baseDir: process.cwd(),\\n      binary: 'git',\\n      maxConcurrentProcesses: 6,\\n    };\\n    this.git = simpleGit(options);\\n  }\\n\\n  public async initializeProject(projectConfig: ProjectConfig, sessionId?: string): Promise<void> {\\n    const finalSessionId = sessionId || projectConfig.sessionId || uuidv4();\\n    this.projectDir = path.join(process.cwd(), finalSessionId);\\n\\n    if (!fs.existsSync(this.projectDir)) {\\n      fs.mkdirSync(this.projectDir, { recursive: true });\\n      await this.git.init(this.projectDir);\\n      console.log(`Initialized new project in ${this.projectDir}`);\\n    } else {\\n      await this.commitChanges(projectConfig);\\n    }\\n  }\\n\\n  public async commitChanges(projectConfig: ProjectConfig): Promise<void> {\\n    try {\\n      for (const file of projectConfig.code.files) {\\n        const filePath = path.join(this.projectDir, file.path, file.name);\\n        fs.mkdirSync(path.dirname(filePath), { recursive: true });\\n        fs.writeFileSync(filePath, file.sourceCode);\\n        await this.git.add(filePath);\\n      }\\n\\n      await this.git.commit(projectConfig.changes.summary);\\n      console.log('Changes committed successfully.');\\n    } catch (err) {\\n      console.log('Conflict detected, resolving...');\\n      await ChatGPTService.resolveConflicts(projectConfig);\\n    }\\n  }\\n}\\n\\nexport default GitService;\\n"
+        },
+        {
+          "name": "chatGPTService.ts",
+          "path": "src/services",
+          "description": "Service to handle Chat GPT interactions for conflict resolution.",
+          "sourceKind": "Service",
+          "sourceCode": "import axios from 'axios';\\nimport { ProjectConfig } from '../types';\\nimport dotenv from 'dotenv';\\n\\ndotenv.config();\\n\\nconst CHAT_GPT_API_URL = 'https://api.openai.com/v1/engines/davinci-codex/completions';\\n\\nclass ChatGPTService {\\n  public static async resolveConflicts(projectConfig: ProjectConfig): Promise<void> {\\n    const prompt = `Resolve the following git conflicts in a TypeScript project:\\n\\n${JSON.stringify(projectConfig, null, 2)}`;\\n    \\n    try {\\n      const response = await axios.post(CHAT_GPT_API_URL, {\\n        prompt,\\n        max_tokens: 1500,\\n        n: 1,\\n        stop: null,\\n        temperature: 0.7\\n      }, {\\n        headers: {\\n          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,\\n          'Content-Type': 'application/json'\\n        }\\n      });\\n\\n      const resolution = response.data.choices[0].text.trim();\\n      console.log('Conflict resolved by Chat GPT:', resolution);\\n    } catch (error) {\\n      console.error('Error resolving conflicts with Chat GPT:', error);\\n    }\\n  }\\n}\\n\\nexport default ChatGPTService;\\n"
+        },
+        {
+          "name": "index.ts",
+          "path": "src",
+          "description": "Main entry point for the CLI program.",
+          "sourceKind": "Main",
+          "sourceCode": "import yargs from 'yargs';\\nimport { hideBin } from 'yargs/helpers';\\nimport GitService from './services/gitService';\\nimport { ProjectConfig } from './types';\\nimport fs from 'fs';\\nimport path from 'path';\\n\\nconst argv = yargs(hideBin(process.argv))\\n  .option('file', {\\n    type: 'string',\\n    description: 'Specifies the JSON file that contains the project structure and code.',\\n    default: 'data.json'\\n  })\\n  .option('session-id', {\\n    type: 'string',\\n    description: 'Specifies the session ID for updating an existing project.',\\n  })\\n  .help()\\n  .argv;\\n\\nconst main = async () => {\\n  const projectConfigPath = argv.file;\\n\\n  const projectConfig: ProjectConfig = JSON.parse(fs.readFileSync(path.resolve(projectConfigPath), 'utf-8'));\\n\\n  const gitService = new GitService();\\n  await gitService.initializeProject(projectConfig, argv['session-id']);\\n};\\n\\nmain().catch(error => {\\n  console.error('Error:', error);\\n  process.exit(1);\\n});\\n"
+        },
+        {
+          "name": "types.ts",
+          "path": "src",
+          "description": "Type definitions for the project.",
+          "sourceKind": "Types",
+          "sourceCode": "export interface ProjectConfig {\\n  language: string;\\n  runtime: string;\\n  sessionId?: string;\\n  code: {\\n    files: Array<{\\n      name: string;\\n      path: string;\\n      description: string;\\n      sourceKind: string;\\n      sourceCode: string;\\n    }>;\\n  };\\n  changes: {\\n    summary: string;\\n    addedFiles: Array<{ path: string; name: string }>;\\n    modifiedFiles: Array<{ path: string; name: string }>;\\n    deletedFiles: Array<{ path: string; name: string }>;\\n  };\\n}\\n"
+        },
+        {
+          "name": "configUtil.ts",
+          "path": "src/utils",
+          "description": "Utility for loading environment variables from .env file.",
+          "sourceKind": "Utility",
+          "sourceCode": "import dotenv from 'dotenv';\\n\\nexport const loadConfig = () => {\\n  dotenv.config();\\n};\\n"
+        },
+        {
+          "name": "package.json",
+          "path": "",
+          "description": "Package configuration file.",
+          "sourceKind": "Configuration",
+          "sourceCode": "{\\n  \\"name\\": \\"project-manager-cli\\",\\n  \\"version\\": \\"1.0.0\\",\\n  \\"description\\": \\"CLI tool to manage TypeScript projects with Chat GPT integration\\",\\n  \\"main\\": \\"dist/index.js\\",\\n  \\"scripts\\": {\\n    \\"build\\": \\"tsc\\",\\n    \\"start\\": \\"node dist/index.js\\"\\n  },\\n  \\"dependencies\\": {\\n    \\"axios\\": \\"^0.21.1\\",\\n    \\"dotenv\\": \\"^10.0.0\\",\\n    \\"simple-git\\": \\"^2.50.0\\",\\n    \\"uuid\\": \\"^8.3.2\\",\\n    \\"yargs\\": \\"^17.2.1\\"\\n  },\\n  \\"devDependencies\\": {\\n    \\"typescript\\": \\"^4.2.4\\"\\n  }\\n}\\n"
+        },
+        {
+          "name": "tsconfig.json",
+          "path": "",
+          "description": "TypeScript configuration file.",
+          "sourceKind": "Configuration",
+          "sourceCode": "{\\n  \\"compilerOptions\\": {\\n    \\"target\\": \\"ES2020\\",\\n    \\"module\\": \\"commonjs\\",\\n    \\"rootDir\\": \\"src\\",\\n    \\"outDir\\": \\"dist\\",\\n    \\"strict\\": true,\\n    \\"esModuleInterop\\": true\\n  }\\n}\\n"
+        },
+        {
+          "name": ".env",
+          "path": "",
+          "description": "Environment variables file.",
+          "sourceKind": "Configuration",
+          "sourceCode": "OPENAI_API_KEY=your_openai_api_key\\n"
+        }
+      ]
+    },
+    "changes": {
+      "summary": "Initial commit of the project manager CLI tool with support for GIT operations and conflict resolution via Chat GPT.",
+      "addedFiles": [
+        { "path": "src/services", "name": "gitService.ts" },
+        { "path": "src/services", "name": "chatGPTService.ts" },
+        { "path": "src", "name": "index.ts" },
+        { "path": "src", "name": "types.ts" },
+        { "path": "src/utils", "name": "configUtil.ts" },
+        { "path": "", "name": "package.json" },
+        { "path": "", "name": "tsconfig.json" },
+        { "path": "", "name": ".env" }
+      ],
+      "modifiedFiles": [],
+      "deletedFiles": []
+    }
+  }
+  
